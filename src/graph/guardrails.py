@@ -112,9 +112,8 @@ def output_guard_node(state: InventoryState) -> dict:
     if not isinstance(final, str):
         final = "" if final is None else str(final)
 
-    final = CONTROL_CHARS.sub("", unicodedata.normalize("NFKC", final)).replace("\r\n", "\n").replace(
-        "\r", "\n"
-    )
+    normalized = unicodedata.normalize("NFKC", final)
+    final = CONTROL_CHARS.sub("", normalized).replace("\r\n", "\n").replace("\r", "\n")
 
     if not final.strip():
         return {"final_message": "Audit completed. No issues detected."}
