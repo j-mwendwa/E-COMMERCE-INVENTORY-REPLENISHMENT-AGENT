@@ -226,6 +226,7 @@ async def finalize_node(state: InventoryState) -> dict:
 
 
 async def rejection_node(state: InventoryState) -> dict:
-    reason = state.get("input_security", {}).get("reason", "Input validation failed")
+    input_security = state.get("input_security") or {}
+    reason = input_security.get("reason", "Input validation failed")
     log.warning("rejection_node", reason=reason)
     return {"final_message": f"Audit rejected: {reason}"}

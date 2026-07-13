@@ -6,9 +6,10 @@ log = structlog.get_logger()
 
 
 def route_after_input_check(state: InventoryState) -> str:
-    decision = state.get("input_security", {}).get("decision", "PASS")
+    input_security = state.get("input_security") or {}
+    decision = input_security.get("decision", "PASS")
     if decision == "BLOCKED":
-        log.info("route.input_guard_blocked", reason=state.get("input_security", {}).get("reason"))
+        log.info("route.input_guard_blocked", reason=input_security.get("reason"))
         return "rejection_node"
     return "stock_monitor_node"
 
