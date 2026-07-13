@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+numpy
+pandas
+faiss-cpu
+scikit-learn
+pydantic
+python-dotenv
+httpx

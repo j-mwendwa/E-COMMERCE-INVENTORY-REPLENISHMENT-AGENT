@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inventory Replenishment Agent</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; color: #333; }
+        .container { max-width: 800px; margin: 0 auto; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); padding: 24px; }
+        h1 { margin: 0 0 8px; font-size: 1.5rem; }
+        p { color: #666; margin: 0 0 24px; }
+        button { background: #0066cc; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 1rem; }
+        button:hover { background: #0052a3; }
+        button:disabled { background: #999; cursor: not-allowed; }
+        pre { background: #f0f0f0; padding: 16px; border-radius: 6px; overflow-x: auto; min-height: 100px; margin-top: 16px; }
+        .status { color: #666; font-style: italic; }
+        .approved { color: #2e7d32; font-weight: bold; }
+        .pending { color: #e65100; font-weight: bold; }
+        .rejected { color: #c62828; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Inventory Replenishment Agent</h1>
+        <p>Automated stock audit, demand forecasting, supplier selection, and manager escalation.</p>
+        <button id="triggerBtn" onclick="triggerAudit()">Trigger Stock Audit</button>
+        <pre id="output" class="status">Click the button to start an audit...</pre>
+    </div>
+    <script>
+        async function triggerAudit() {
+            const btn = document.getElementById('triggerBtn');
+            const output = document.getElementById('output');
+            btn.disabled = true;
+            output.className = 'status';
+            output.textContent = 'Running audit...';
+
+            try {
+                const resp = await fetch('/audit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-API-Key': 'dev-local-key' },
+                    body: JSON.stringify({}),
+                });
+                const data = await resp.json();
+                output.className = data.status === 'completed' ? 'approved' : 'pending';
+                output.textContent = JSON.stringify(data, null, 2);
+            } catch (err) {
+                output.className = 'rejected';
+                output.textContent = `Error: ${err.message}`;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./chroma:/app/chroma
+    depends_on:
+      chroma:
+        condition: service_started
+
+  chroma:
+    image: chromadb/chroma:latest
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./chroma:/chroma/chroma
+    environment:
+      - IS_PERSISTENT=true
+      - ANONYMIZED_TELEMETRY=false
