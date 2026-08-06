@@ -2,6 +2,7 @@ import structlog
 
 from src.config import cfg
 from src.core.context_assembler import ContextAssembler
+from src.core.tracing import traceable
 from src.db.client import get_db_client
 from src.graph.state import InventoryState
 from src.models.inventory import (
@@ -20,6 +21,7 @@ context_assembler = ContextAssembler(
 _db = get_db_client()
 
 
+@traceable(name="stock_monitor_node")
 async def stock_monitor_node(state: InventoryState) -> dict:
     log.info("node.stock_monitor", skus=state.get("skus"))
     stock_levels = await _db.get_stock_levels(state.get("skus"))
@@ -28,6 +30,7 @@ async def stock_monitor_node(state: InventoryState) -> dict:
     return {"stock_levels": stock_levels, "skus": skus}
 
 
+@traceable(name="demand_forecast_node")
 async def demand_forecast_node(state: InventoryState) -> dict:
     log.info("node.demand_forecast")
     stock_levels = state["stock_levels"]
@@ -104,6 +107,7 @@ async def demand_forecast_node(state: InventoryState) -> dict:
     }
 
 
+@traceable(name="supplier_selection_node")
 async def supplier_selection_node(state: InventoryState) -> dict:
     log.info("node.supplier_selection", deficit_skus=state.get("deficit_skus", []))
     selected_suppliers: dict[str, str] = {}
@@ -128,6 +132,7 @@ async def supplier_selection_node(state: InventoryState) -> dict:
     return {"selected_suppliers": selected_suppliers, "supplier_details": supplier_details}
 
 
+@traceable(name="order_generation_node")
 async def order_generation_node(state: InventoryState) -> dict:
     log.info("node.order_generation")
     order_proposals: dict[str, dict] = {}
@@ -178,6 +183,7 @@ async def order_generation_node(state: InventoryState) -> dict:
     }
 
 
+@traceable(name="escalation_check_node")
 async def escalation_check_node(state: InventoryState) -> dict:
     threshold = cfg.get("escalation", {}).get("order_value_threshold", 10000.0)
     risk_threshold = cfg.get("escalation", {}).get("risk_score_threshold", 0.7)
@@ -199,6 +205,7 @@ async def escalation_check_node(state: InventoryState) -> dict:
     return {"requires_approval": requires}
 
 
+@traceable(name="finalize_node")
 async def finalize_node(state: InventoryState) -> dict:
     if state.get("approved") is False:
         return {"final_message": "Purchase orders rejected by manager. No orders placed."}
@@ -225,6 +232,7 @@ async def finalize_node(state: InventoryState) -> dict:
     return {"final_message": "Audit requires manager approval."}
 
 
+@traceable(name="rejection_node")
 async def rejection_node(state: InventoryState) -> dict:
     input_security = state.get("input_security") or {}
     reason = input_security.get("reason", "Input validation failed")

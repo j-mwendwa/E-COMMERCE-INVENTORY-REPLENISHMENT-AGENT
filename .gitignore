@@ -1,0 +1,51 @@
+# ─── Secrets & environment ────────────────────────────────────
+.env
+*.env.local
+*.env.production
+*.env.staging
+
+# ─── Python ────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+
+# ─── Pytest / coverage ─────────────────────────────────────────
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ─── Type checking ─────────────────────────────────────────────
+.mypy_cache/
+.ruff_cache/
+
+# ─── Data / vector stores ──────────────────────────────────────
+data/
+chroma/
+*.db
+*.sqlite
+
+# ─── Docker ────────────────────────────────────────────────────
+.dockerignore
+
+# ─── IDE ───────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.iml
+
+# ─── OS ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─── Logs ──────────────────────────────────────────────────────
+*.log
+logs/

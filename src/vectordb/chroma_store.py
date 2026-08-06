@@ -1,4 +1,3 @@
-
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 
@@ -18,7 +17,8 @@ def _get_client():
 
     try:
         _CHROMA_CLIENT = chromadb.HttpClient(
-            host="localhost", port=8001,
+            host="localhost",
+            port=8001,
             settings=ChromaSettings(anonymized_telemetry=False),
         )
         _CHROMA_CLIENT.heartbeat()

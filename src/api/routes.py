@@ -15,6 +15,7 @@ from src.api.schemas import (
     StockLevel,
     VersionResponse,
 )
+from src.core.tracing import traceable
 from src.graph.checkpointer import run_audit, run_audit_with_approval
 from src.graph.state import InventoryState
 
@@ -23,16 +24,19 @@ router = APIRouter()
 
 
 @router.get("/health", response_model=HealthResponse)
+@traceable(name="health")
 async def health():
     return HealthResponse()
 
 
 @router.get("/version", response_model=VersionResponse)
+@traceable(name="version")
 async def version():
     return VersionResponse()
 
 
 @router.post("/audit", response_model=AuditResult)
+@traceable(name="trigger_audit")
 async def trigger_audit(
     body: AuditTriggerRequest,
     _api_key: str = Depends(require_api_key),
@@ -47,6 +51,7 @@ async def trigger_audit(
 
 
 @router.post("/audit/{audit_id}/approve", response_model=AuditResult)
+@traceable(name="approve_audit")
 async def approve_audit(
     audit_id: str,
     body: ApprovalRequest,
@@ -60,6 +65,7 @@ async def approve_audit(
     return _state_to_result(audit_id, result)
 
 
+@traceable(name="_state_to_result")
 def _state_to_result(audit_id: str, state: InventoryState) -> AuditResult:
     stock_levels = []
     for sku in state.get("skus", []):

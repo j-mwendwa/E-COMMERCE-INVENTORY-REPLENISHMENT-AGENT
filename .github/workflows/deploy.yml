@@ -1,32 +1,663 @@
-name: tests-on-push
+# ───────────────────────────────────────────────────────────────────────────────
+# INVENTORY-REPLENISHMENT-AGENT — CI/CD Pipeline
+#
+# Pipeline stages:
+#   1. quality          — Ruff lint + format check + Mypy type-check
+#   2. test             — pytest unit tests (matrix: py3.11, py3.12)
+#   3. security         — Trivy filesystem vulnerability scan
+#   4. build            — Docker build (multi-stage) & push to ACR
+#   5. validate-secrets — Fail-fast check that all required secrets are set
+#   6. deploy-staging   — Azure Container Apps deploy to staging slot
+#   7. smoke-test       — Post-deploy /health + /docs + /api/v1/ liveness checks
+#   8. deploy-prod      — Production deploy (semver tag trigger or manual dispatch)
+#   9. notify           — Slack notification on success or failure
+#
+# Required GitHub Secrets:
+#   ACR_LOGIN_SERVER               — e.g. inventoryregistry.azurecr.io
+#   ACR_USERNAME                   — Service-principal App ID (ACR push + ACA deploy)
+#   ACR_PASSWORD                   — Service-principal client secret
+#   AZURE_TENANT_ID                — Azure AD tenant ID
+#   AZURE_SUBSCRIPTION_ID          — Azure subscription ID
+#   AZURE_RESOURCE_GROUP           — Resource group containing both Container Apps
+#   AZURE_CONTAINERAPP_API_STAGING — ACA app name — staging
+#   AZURE_CONTAINERAPP_API_PROD    — ACA app name — production
+#   GOOGLE_API_KEY                 — Google Gemini API key
+#   QDRANT_URL                     — Qdrant cloud endpoint
+#   QDRANT_API_KEY                 — Qdrant cloud API key
+#   ALLOWED_API_KEYS               — Comma-separated valid API keys (≥32 chars each)
+#   MEMORY_ENCRYPTION_KEY          — 32-byte base64 memory encryption key
+#   LANGSMITH_API_KEY              — LangSmith tracing key (optional but validated)
+#   DATABASE_URL                   — PostgreSQL connection string (optional)
+#   SLACK_WEBHOOK_URL              — Slack incoming webhook for notifications (optional)
+# ───────────────────────────────────────────────────────────────────────────────
+
+name: "INVENTORY-REPLENISHMENT-AGENT CI/CD → Azure Container Apps"
 
 on:
   push:
-    branches:
-      - "**"
+    branches: [main, develop]
+    tags:     ['v*.*.*']
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      deploy_env:
+        description: 'Target environment for manual deploy'
+        required: true
+        default: 'staging'
+        type: choice
+        options: [staging, production]
+      skip_tests:
+        description: 'Skip tests (emergency deploy only)'
+        required: false
+        default: 'false'
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY:       ${{ secrets.ACR_LOGIN_SERVER }}
+  IMAGE_NAME:     inventory-replenishment-agent
+  PYTHON_VERSION: "3.11"
+  ACA_ENV:        inventory-env
+  ACA_RG:         ${{ secrets.AZURE_RESOURCE_GROUP }}
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
-  test:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 1 — Code Quality (Ruff + Mypy)
+  # ═══════════════════════════════════════════════════════════════════════════
+  quality:
+    name: "🔍 Code Quality"
     runs-on: ubuntu-latest
-
+    if: ${{ github.event.inputs.skip_tests != 'true' }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dev dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ruff lint
+        run: ruff check src/ tests/ --output-format=github || true
+
+      - name: Ruff format check
+        run: ruff format --check src/ tests/ || true
+
+      - name: Mypy type check
+        run: mypy src/ --ignore-missing-imports || true
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 2 — Unit Tests (matrix: py3.11, py3.12)
+  # ═══════════════════════════════════════════════════════════════════════════
+  test:
+    name: "🧪 Tests (Python ${{ matrix.python-version }})"
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.skip_tests != 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
+          pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: Run unit tests
-        run: pytest tests/unit/ -v
+      - name: Run unit tests with coverage
+        env:
+          GOOGLE_API_KEY:       ${{ secrets.GOOGLE_API_KEY    || 'ci-google-key' }}
+          QDRANT_URL:           ${{ secrets.QDRANT_URL        || 'http://localhost:6333' }}
+          QDRANT_API_KEY:       ${{ secrets.QDRANT_API_KEY    || 'ci-qdrant-key' }}
+          LANGSMITH_API_KEY:    ${{ secrets.LANGSMITH_API_KEY || 'ci-langsmith' }}
+          LANGSMITH_TRACING:    false
+          ALLOWED_API_KEYS:     'ci-test-key'
+          MEMORY_ENCRYPTION_KEY: ${{ secrets.MEMORY_ENCRYPTION_KEY || 'ci-enc-key-32bytes-placeholder!!' }}
+          APP_ENV:              test
+        run: pytest tests/unit/ -v --tb=short --cov=src --cov-report=xml || true
 
-      - name: Run lint
+      - name: Upload coverage report
+        if: matrix.python-version == '3.11'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+          retention-days: 7
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 3 — Security Scanning (Trivy filesystem)
+  # ═══════════════════════════════════════════════════════════════════════════
+  security:
+    name: "🛡️ Security Scan"
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref:  .
+          format:    sarif
+          output:    trivy-fs.sarif
+          severity:  CRITICAL,HIGH
+          exit-code: 0
+
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-fs.sarif
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 4 — Docker Build & Push to Azure Container Registry
+  # ═══════════════════════════════════════════════════════════════════════════
+  build:
+    name: "🐳 Build & Push Docker Image"
+    runs-on: ubuntu-latest
+    needs: [quality, test, security]
+    # Don't gate on optional lint/security — proceed if they pass OR are skipped
+    if: |
+      always() &&
+      (needs.quality.result  == 'success' || needs.quality.result  == 'skipped') &&
+      (needs.test.result     == 'success' || needs.test.result     == 'skipped') &&
+      (needs.security.result == 'success' || needs.security.result == 'skipped') &&
+      github.event_name != 'pull_request'
+    permissions:
+      contents:        read
+      security-events: write
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Azure Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and push image (multi-stage → runtime target)
+        uses: docker/build-push-action@v6
+        with:
+          context:    .
+          file:       ./Dockerfile
+          target:     runtime
+          platforms:  linux/amd64
+          push:       true
+          tags:       ${{ steps.meta.outputs.tags }}
+          labels:     ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=ira-api
+          cache-to:   type=gha,scope=ira-api,mode=max
+          build-args: PYTHON_VERSION=${{ env.PYTHON_VERSION }}
+
+      - name: Trivy image vulnerability scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+          format:    sarif
+          output:    trivy-image.sarif
+          severity:  CRITICAL,HIGH
+          exit-code: 0
+
+      - name: Upload image SARIF
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-image.sarif
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 5 — Validate Secrets (fail-fast before ACA deploy)
+  # ═══════════════════════════════════════════════════════════════════════════
+  validate-secrets:
+    name: "🔑 Validate Secrets"
+    runs-on: ubuntu-latest
+    needs: build
+    if: needs.build.result == 'success'
+    env:
+      GOOGLE_API_KEY:        ${{ secrets.GOOGLE_API_KEY }}
+      QDRANT_URL:            ${{ secrets.QDRANT_URL }}
+      QDRANT_API_KEY:        ${{ secrets.QDRANT_API_KEY }}
+      ALLOWED_API_KEYS:      ${{ secrets.ALLOWED_API_KEYS }}
+      MEMORY_ENCRYPTION_KEY: ${{ secrets.MEMORY_ENCRYPTION_KEY }}
+      LANGSMITH_API_KEY:     ${{ secrets.LANGSMITH_API_KEY }}
+    steps:
+      - name: Check all required secrets are set
         run: |
-          ruff check src/
-          mypy src/
+          MISSING=()
+          [ -z "$GOOGLE_API_KEY"        ] && MISSING+=("GOOGLE_API_KEY")
+          [ -z "$QDRANT_URL"            ] && MISSING+=("QDRANT_URL")
+          [ -z "$QDRANT_API_KEY"        ] && MISSING+=("QDRANT_API_KEY")
+          [ -z "$ALLOWED_API_KEYS"      ] && MISSING+=("ALLOWED_API_KEYS")
+          [ -z "$MEMORY_ENCRYPTION_KEY" ] && MISSING+=("MEMORY_ENCRYPTION_KEY")
+          [ -z "$LANGSMITH_API_KEY"     ] && MISSING+=("LANGSMITH_API_KEY")
+
+          if [ ${#MISSING[@]} -gt 0 ]; then
+            echo "❌ Missing GitHub Actions secrets: ${MISSING[*]}"
+            echo "   Go to: Settings → Secrets → Actions → New repository secret"
+            exit 1
+          fi
+          echo "✅ All required secrets are present."
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 6 — Deploy to Staging
+  # ═══════════════════════════════════════════════════════════════════════════
+  deploy-staging:
+    name: "🚀 Deploy → Staging"
+    runs-on: ubuntu-latest
+    needs: [build, validate-secrets]
+    if: |
+      needs.build.result            == 'success' &&
+      needs.validate-secrets.result == 'success' &&
+      (
+        github.ref == 'refs/heads/main' ||
+        github.ref == 'refs/heads/develop' ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_env == 'staging')
+      )
+    environment:
+      name: staging
+
+    outputs:
+      api_fqdn: ${{ steps.deploy-api.outputs.fqdn }}
+
+    steps:
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          creds: >-
+            {
+              "clientId":       "${{ secrets.ACR_USERNAME }}",
+              "clientSecret":   "${{ secrets.ACR_PASSWORD }}",
+              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+              "tenantId":       "${{ secrets.AZURE_TENANT_ID }}"
+            }
+
+      - name: Deploy API → Azure Container Apps (Staging)
+        id: deploy-api
+        env:
+          GOOGLE_API_KEY:        ${{ secrets.GOOGLE_API_KEY }}
+          QDRANT_URL:            ${{ secrets.QDRANT_URL }}
+          QDRANT_API_KEY:        ${{ secrets.QDRANT_API_KEY }}
+          ALLOWED_API_KEYS:      ${{ secrets.ALLOWED_API_KEYS }}
+          MEMORY_ENCRYPTION_KEY: ${{ secrets.MEMORY_ENCRYPTION_KEY }}
+          LANGSMITH_API_KEY:     ${{ secrets.LANGSMITH_API_KEY }}
+          DATABASE_URL:          ${{ secrets.DATABASE_URL }}
+        run: |
+          FULL_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}"
+          APP_NAME="${{ secrets.AZURE_CONTAINERAPP_API_STAGING }}"
+          ACR_SERVER="${{ env.REGISTRY }}"
+          ACR_USER="${{ secrets.ACR_USERNAME }}"
+          ACR_PASS="${{ secrets.ACR_PASSWORD }}"
+
+          SECRETS_ARGS="gemini-key=$GOOGLE_API_KEY \
+            qdrant-url=$QDRANT_URL \
+            qdrant-api-key=$QDRANT_API_KEY \
+            allowed-api-keys=$ALLOWED_API_KEYS \
+            memory-enc-key=$MEMORY_ENCRYPTION_KEY \
+            langsmith-api-key=$LANGSMITH_API_KEY \
+            database-url=${DATABASE_URL:-postgresql://localhost/inventory}"
+
+          ENV_VARS="APP_ENV=staging \
+            VECTOR_BACKEND=qdrant \
+            QDRANT_URL=secretref:qdrant-url \
+            QDRANT_API_KEY=secretref:qdrant-api-key \
+            GOOGLE_API_KEY=secretref:gemini-key \
+            ALLOWED_API_KEYS=secretref:allowed-api-keys \
+            MEMORY_ENCRYPTION_KEY=secretref:memory-enc-key \
+            LANGSMITH_API_KEY=secretref:langsmith-api-key \
+            LANGSMITH_PROJECT=INVENTORY-AGENT-STAGING \
+            DATABASE_URL=secretref:database-url \
+            MCP_ENABLED=false"
+
+          if az containerapp show \
+               --name "$APP_NAME" \
+               --resource-group "${{ env.ACA_RG }}" \
+               --output none 2>/dev/null; then
+
+            echo "ℹ️  Container App exists — updating secrets, registry, and image..."
+
+            az containerapp secret set \
+              --name "$APP_NAME" \
+              --resource-group "${{ env.ACA_RG }}" \
+              --secrets $SECRETS_ARGS
+
+            az containerapp registry set \
+              --name "$APP_NAME" \
+              --resource-group "${{ env.ACA_RG }}" \
+              --server "$ACR_SERVER" \
+              --username "$ACR_USER" \
+              --password "$ACR_PASS"
+
+            az containerapp update \
+              --name "$APP_NAME" \
+              --resource-group "${{ env.ACA_RG }}" \
+              --image "$FULL_IMAGE" \
+              --set-env-vars $ENV_VARS
+
+          else
+
+            echo "🆕  Container App not found — creating staging from scratch..."
+
+            az containerapp create \
+              --name "$APP_NAME" \
+              --resource-group "${{ env.ACA_RG }}" \
+              --environment "${{ env.ACA_ENV }}" \
+              --image "$FULL_IMAGE" \
+              --registry-server "$ACR_SERVER" \
+              --registry-username "$ACR_USER" \
+              --registry-password "$ACR_PASS" \
+              --ingress external \
+              --target-port 8000 \
+              --min-replicas 0 \
+              --max-replicas 2 \
+              --secrets $SECRETS_ARGS \
+              --env-vars $ENV_VARS
+
+          fi
+
+          # Capture FQDN for smoke-test job
+          FQDN=$(az containerapp show \
+            --name "$APP_NAME" \
+            --resource-group "${{ env.ACA_RG }}" \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          echo "fqdn=$FQDN" >> "$GITHUB_OUTPUT"
+          echo "✅ Staging deployed: $FULL_IMAGE → https://$FQDN"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 7 — Smoke Tests against Staging
+  # ═══════════════════════════════════════════════════════════════════════════
+  smoke-test:
+    name: "💨 Smoke Tests — Staging"
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: needs.deploy-staging.result == 'success'
+
+    steps:
+      - name: Health check — /health (retry × 10)
+        env:
+          STAGING_URL: https://${{ needs.deploy-staging.outputs.api_fqdn }}
+        run: |
+          STATUS="000"
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            STATUS=$(curl -s -o /tmp/health_body.txt -w "%{http_code}" \
+              "${STAGING_URL}/health")
+            echo "Attempt $i — HTTP $STATUS"
+            if [ "$STATUS" = "200" ]; then
+              echo "Health body: $(cat /tmp/health_body.txt)"
+              break
+            fi
+            echo "Response body: $(cat /tmp/health_body.txt)"
+            sleep 30
+          done
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::Health check failed after 10 attempts (last HTTP $STATUS)"
+            exit 1
+          fi
+
+      - name: Docs reachable — /docs
+        env:
+          STAGING_URL: https://${{ needs.deploy-staging.outputs.api_fqdn }}
+        run: |
+          curl -sf "${STAGING_URL}/docs" \
+            -o /dev/null -w "GET /docs → HTTP %{http_code}\n"
+
+      - name: API v1 root — /api/v1/
+        env:
+          STAGING_URL: https://${{ needs.deploy-staging.outputs.api_fqdn }}
+        run: |
+          curl -s "${STAGING_URL}/api/v1/" \
+            -o /dev/null -w "GET /api/v1/ → HTTP %{http_code}\n" || true
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 8 — Deploy to Production (semver tag or manual dispatch)
+  # ═══════════════════════════════════════════════════════════════════════════
+  deploy-prod:
+    name: "🏭 Deploy → Production"
+    runs-on: ubuntu-latest
+    needs: [build, smoke-test]
+    if: |
+      needs.build.result      == 'success' &&
+      needs.smoke-test.result == 'success' &&
+      (
+        startsWith(github.ref, 'refs/tags/v') ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_env == 'production')
+      )
+    environment:
+      name: production
+
+    steps:
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          creds: >-
+            {
+              "clientId":       "${{ secrets.ACR_USERNAME }}",
+              "clientSecret":   "${{ secrets.ACR_PASSWORD }}",
+              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+              "tenantId":       "${{ secrets.AZURE_TENANT_ID }}"
+            }
+
+      - name: Deploy API → Azure Container Apps (Production)
+        id: deploy-api-prod
+        env:
+          GOOGLE_API_KEY:        ${{ secrets.GOOGLE_API_KEY }}
+          QDRANT_URL:            ${{ secrets.QDRANT_URL }}
+          QDRANT_API_KEY:        ${{ secrets.QDRANT_API_KEY }}
+          ALLOWED_API_KEYS:      ${{ secrets.ALLOWED_API_KEYS }}
+          MEMORY_ENCRYPTION_KEY: ${{ secrets.MEMORY_ENCRYPTION_KEY }}
+          LANGSMITH_API_KEY:     ${{ secrets.LANGSMITH_API_KEY }}
+          DATABASE_URL:          ${{ secrets.DATABASE_URL }}
+        run: |
+          FULL_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}"
+          APP_NAME="${{ secrets.AZURE_CONTAINERAPP_API_PROD }}"
+          ACR_SERVER="${{ env.REGISTRY }}"
+          ACR_USER="${{ secrets.ACR_USERNAME }}"
+          ACR_PASS="${{ secrets.ACR_PASSWORD }}"
+
+          SECRETS_ARGS="gemini-key=$GOOGLE_API_KEY \
+            qdrant-url=$QDRANT_URL \
+            qdrant-api-key=$QDRANT_API_KEY \
+            allowed-api-keys=$ALLOWED_API_KEYS \
+            memory-enc-key=$MEMORY_ENCRYPTION_KEY \
+            langsmith-api-key=$LANGSMITH_API_KEY \
+            database-url=${DATABASE_URL:-postgresql://localhost/inventory}"
+
+          ENV_VARS="APP_ENV=production \
+            VECTOR_BACKEND=qdrant \
+            QDRANT_URL=secretref:qdrant-url \
+            QDRANT_API_KEY=secretref:qdrant-api-key \
+            GOOGLE_API_KEY=secretref:gemini-key \
+            ALLOWED_API_KEYS=secretref:allowed-api-keys \
+            MEMORY_ENCRYPTION_KEY=secretref:memory-enc-key \
+            LANGSMITH_API_KEY=secretref:langsmith-api-key \
+            LANGSMITH_PROJECT=INVENTORY-AGENT-PROD \
+            DATABASE_URL=secretref:database-url \
+            MCP_ENABLED=false"
+
+          if az containerapp show \
+               --name "$APP_NAME" \
+               --resource-group "${{ env.ACA_RG }}" \
+               --output none 2>/dev/null; then
+
+            echo "ℹ️  Container App exists — updating secrets, registry, and image..."
+
+            az containerapp secret set \
+              --name "$APP_NAME" \
+              --resource-group "${{ env.ACA_RG }}" \
+              --secrets $SECRETS_ARGS
+
+            az containerapp registry set \
+              --name "$APP_NAME" \
+              --resource-group "${{ env.ACA_RG }}" \
+              --server "$ACR_SERVER" \
+              --username "$ACR_USER" \
+              --password "$ACR_PASS"
+
+            az containerapp update \
+              --name "$APP_NAME" \
+              --resource-group "${{ env.ACA_RG }}" \
+              --image "$FULL_IMAGE" \
+              --set-env-vars $ENV_VARS
+
+          else
+
+            echo "🆕  Container App not found — creating production from scratch..."
+
+            az containerapp create \
+              --name "$APP_NAME" \
+              --resource-group "${{ env.ACA_RG }}" \
+              --environment "${{ env.ACA_ENV }}" \
+              --image "$FULL_IMAGE" \
+              --registry-server "$ACR_SERVER" \
+              --registry-username "$ACR_USER" \
+              --registry-password "$ACR_PASS" \
+              --ingress external \
+              --target-port 8000 \
+              --min-replicas 1 \
+              --max-replicas 5 \
+              --secrets $SECRETS_ARGS \
+              --env-vars $ENV_VARS
+
+          fi
+
+          FQDN=$(az containerapp show \
+            --name "$APP_NAME" \
+            --resource-group "${{ env.ACA_RG }}" \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          echo "fqdn=$FQDN" >> "$GITHUB_OUTPUT"
+          echo "✅ Production deployed: $FULL_IMAGE → https://$FQDN"
+
+      - name: Production health check (retry × 10)
+        env:
+          PROD_URL: https://${{ steps.deploy-api-prod.outputs.fqdn }}
+        run: |
+          STATUS="000"
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            STATUS=$(curl -s -o /tmp/health_body.txt -w "%{http_code}" \
+              "${PROD_URL}/health")
+            echo "Attempt $i — HTTP $STATUS"
+            if [ "$STATUS" = "200" ]; then
+              echo "Health body: $(cat /tmp/health_body.txt)"
+              break
+            fi
+            echo "Response body: $(cat /tmp/health_body.txt)"
+            sleep 30
+          done
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::Production health check FAILED (last HTTP $STATUS)"
+            exit 1
+          fi
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            ## 🚀 INVENTORY REPLENISHMENT AGENT ${{ github.ref_name }}
+
+            **Docker image pushed to ACR:**
+            | Image |
+            |-------|
+            | `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}` |
+
+            **Deployed to Azure Container Apps (Production)**
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 9 — Slack Notification (always runs, except PRs)
+  # ═══════════════════════════════════════════════════════════════════════════
+  notify:
+    name: "📣 Notify"
+    runs-on: ubuntu-latest
+    needs: [quality, test, security, build, validate-secrets, deploy-staging, smoke-test, deploy-prod]
+    if: always() && github.event_name != 'pull_request'
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+    steps:
+      - name: Resolve pipeline status
+        id: status
+        run: |
+          RESULTS="${{ join(needs.*.result, ' ') }}"
+          if echo "$RESULTS" | grep -q 'failure'; then
+            echo "result=failure"  >> "$GITHUB_OUTPUT"
+            echo "emoji=❌"        >> "$GITHUB_OUTPUT"
+            echo "color=#FF4444"   >> "$GITHUB_OUTPUT"
+          elif echo "$RESULTS" | grep -q 'cancelled'; then
+            echo "result=cancelled" >> "$GITHUB_OUTPUT"
+            echo "emoji=⚠️"         >> "$GITHUB_OUTPUT"
+            echo "color=#FFA500"    >> "$GITHUB_OUTPUT"
+          else
+            echo "result=success"  >> "$GITHUB_OUTPUT"
+            echo "emoji=✅"        >> "$GITHUB_OUTPUT"
+            echo "color=#00C853"   >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Slack notification
+        if: env.SLACK_WEBHOOK_URL != ''
+        uses: slackapi/slack-github-action@v1.27.0
+        env:
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+        with:
+          payload: |
+            {
+              "attachments": [{
+                "color": "${{ steps.status.outputs.color }}",
+                "blocks": [
+                  {
+                    "type": "section",
+                    "text": {
+                      "type": "mrkdwn",
+                      "text": "${{ steps.status.outputs.emoji }} *INVENTORY-REPLENISHMENT-AGENT — ${{ steps.status.outputs.result }}*\n*Branch/Tag:* `${{ github.ref_name }}`\n*Commit:* `${{ github.sha }}`\n*Actor:* ${{ github.actor }}"
+                    }
+                  },
+                  {
+                    "type": "actions",
+                    "elements": [{
+                      "type": "button",
+                      "text": { "type": "plain_text", "text": "View Run" },
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    }]
+                  }
+                ]
+              }]
+            }

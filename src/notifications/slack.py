@@ -27,6 +27,7 @@ async def send_escalation_notification(
 
     try:
         import httpx
+
         async with httpx.AsyncClient() as client:
             resp = await client.post(settings.slack_webhook_url, json=payload)
             resp.raise_for_status()

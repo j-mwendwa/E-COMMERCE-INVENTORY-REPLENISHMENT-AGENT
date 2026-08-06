@@ -38,16 +38,20 @@ async def summarize_history(previous_summary: str | None, transcript: str) -> st
     summarizer = _get_summarizer()
     system_prompt = load_prompt("summarizer_system")
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        ("human", "Previous summary:\n{summary}\n\nNew transcript:\n{transcript}"),
-    ])
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", system_prompt),
+            ("human", "Previous summary:\n{summary}\n\nNew transcript:\n{transcript}"),
+        ]
+    )
 
     chain = prompt | summarizer
-    result = await chain.ainvoke({
-        "summary": previous_summary or "No prior conversation.",
-        "transcript": transcript,
-    })
+    result = await chain.ainvoke(
+        {
+            "summary": previous_summary or "No prior conversation.",
+            "transcript": transcript,
+        }
+    )
 
     summary = result.content.strip()
     log.info("conversation_summarized", summary_length=len(summary))

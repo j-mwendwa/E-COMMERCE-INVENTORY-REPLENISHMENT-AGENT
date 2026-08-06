@@ -1,6 +1,7 @@
 import structlog
 
 from src.core.token_counter import count_tokens, truncate_to_tokens
+from src.core.tracing import traceable
 
 log = structlog.get_logger()
 
@@ -9,6 +10,7 @@ class ContextAssembler:
     def __init__(self, target_tokens: int = 8000):
         self.target_tokens = target_tokens
 
+    @traceable(name="context_assembler.build")
     def build(
         self,
         system_prompt: str,
@@ -19,9 +21,11 @@ class ContextAssembler:
         parts: list[str] = [system_prompt]
 
         if entity_memory:
-            memory_block = "<entity_memory>\n" + "\n".join(
-                f"- {k}: {v}" for k, v in entity_memory.items()
-            ) + "\n</entity_memory>"
+            memory_block = (
+                "<entity_memory>\n"
+                + "\n".join(f"- {k}: {v}" for k, v in entity_memory.items())
+                + "\n</entity_memory>"
+            )
             parts.append(memory_block)
 
         if conversation_summary:
@@ -49,9 +53,9 @@ class ContextAssembler:
             parts = [system_prompt]
             if entity_memory:
                 parts.append(
-                    "<entity_memory>\n" + "\n".join(
-                        f"- {k}: {v}" for k, v in entity_memory.items()
-                    ) + "\n</entity_memory>"
+                    "<entity_memory>\n"
+                    + "\n".join(f"- {k}: {v}" for k, v in entity_memory.items())
+                    + "\n</entity_memory>"
                 )
             if conversation_summary:
                 summary_block = (

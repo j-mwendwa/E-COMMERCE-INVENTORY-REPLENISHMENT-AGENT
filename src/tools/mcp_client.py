@@ -22,9 +22,11 @@ log = structlog.get_logger()
 
 def _resolve_env(value: str) -> str:
     """Replace ${VAR} placeholders with values from settings or os.environ."""
+
     def _replace(m: re.Match) -> str:
         name = m.group(1)
         return str(getattr(settings, name.lower(), os.environ.get(name, "")))
+
     return re.sub(r"\$\{(\w+)\}", _replace, value)
 
 
@@ -61,8 +63,7 @@ async def _load_server(name: str, server_cfg: dict) -> int:
 async def _load_sse(name: str, server_cfg: dict) -> int:
     url = _resolve_env(server_cfg["url"])
     log.info("mcp_connect_sse", server=name, url=url)
-    async with sse_client(url=url) as streams, \
-              ClientSession(streams[0], streams[1]) as session:
+    async with sse_client(url=url) as streams, ClientSession(streams[0], streams[1]) as session:
         await session.initialize()
         tools = (await session.list_tools()).tools
         for t in tools:
@@ -78,8 +79,7 @@ async def _load_stdio(name: str, server_cfg: dict) -> int:
 
     params = StdioServerParameters(command=cmd, args=args, env=merged)
     log.info("mcp_connect_stdio", server=name, command=cmd)
-    async with stdio_client(params) as streams, \
-              ClientSession(streams[0], streams[1]) as session:
+    async with stdio_client(params) as streams, ClientSession(streams[0], streams[1]) as session:
         await session.initialize()
         tools = (await session.list_tools()).tools
         for t in tools:
@@ -91,6 +91,7 @@ def _wrap_tool(session: ClientSession, tool_name: str):
     async def fn(**kwargs) -> str:
         result = await session.call_tool(tool_name, kwargs)
         return str(result.content[0].text) if result.content else ""
+
     fn.__name__ = tool_name
     fn.__doc__ = f"MCP tool: {tool_name}"
     return fn

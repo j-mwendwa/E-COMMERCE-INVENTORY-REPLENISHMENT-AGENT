@@ -42,8 +42,7 @@ class EconomicOrderQuantity:
         if self.holding_cost_rate * self.unit_cost <= 0:
             return 0.0
         return math.sqrt(
-            (2 * self.annual_demand * self.order_cost)
-            / (self.holding_cost_rate * self.unit_cost)
+            (2 * self.annual_demand * self.order_cost) / (self.holding_cost_rate * self.unit_cost)
         )
 
 

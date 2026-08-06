@@ -1,4 +1,5 @@
 from src.config import cfg
+from src.core.tracing import traceable
 from src.vectordb.factory import get_vector_store
 
 _RETRIEVER = None
@@ -11,6 +12,7 @@ class LlamaIndexRetriever:
         self.top_k = cfg.get("retrieval", {}).get("top_k", 5)
         self.cutoff = cfg.get("retrieval", {}).get("similarity_cutoff", 0.7)
 
+    @traceable(name="retriever.retrieve")
     def retrieve(self, query: str) -> list[str]:
         try:
             results = self.vector_store.similarity_search_with_score(query, k=self.top_k)

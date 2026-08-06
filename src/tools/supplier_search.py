@@ -1,3 +1,4 @@
+from src.core.tracing import traceable
 from src.models.procurement import Supplier
 
 _MOCK_SUPPLIERS: list[Supplier] = [
@@ -38,15 +39,19 @@ _MOCK_SUPPLIERS: list[Supplier] = [
 ]
 
 
+@traceable(name="search_suppliers_for_sku")
 def search_suppliers_for_sku(sku: str) -> list[Supplier]:
     matching = [s for s in _MOCK_SUPPLIERS if sku in s.skus]
-    matching.sort(key=lambda s: (
-        -s.reliability_score,
-        s.unit_price_for(sku) if s.unit_price_for(sku) > 0 else float("inf"),
-        s.lead_time_days,
-    ))
+    matching.sort(
+        key=lambda s: (
+            -s.reliability_score,
+            s.unit_price_for(sku) if s.unit_price_for(sku) > 0 else float("inf"),
+            s.lead_time_days,
+        )
+    )
     return matching
 
 
+@traceable(name="get_all_suppliers")
 def get_all_suppliers() -> list[Supplier]:
     return list(_MOCK_SUPPLIERS)

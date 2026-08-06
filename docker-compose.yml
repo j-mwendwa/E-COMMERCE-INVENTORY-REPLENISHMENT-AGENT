@@ -1,15 +1,42 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# INVENTORY-REPLENISHMENT-AGENT — docker-compose.yml
+#
+# Services:
+#   api      — FastAPI/Uvicorn application (production runtime image)
+#   chroma   — ChromaDB vector store (local dev fallback)
+#
+# Usage:
+#   docker compose up                  # start all services
+#   docker compose up --build          # rebuild api image before starting
+#   docker compose run api pytest      # run tests inside container
+# ─────────────────────────────────────────────────────────────────────────────
+
 services:
   api:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime          # use the lean production stage
+    image: inventory-replenishment-agent:local
     ports:
-      - "8000:8000"
+      - "${PORT:-8000}:8000"
     env_file: .env
+    environment:
+      - APP_ENV=development
+      - VECTOR_BACKEND=chroma
     volumes:
       - ./data:/app/data
       - ./chroma:/app/chroma
     depends_on:
       chroma:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout:  10s
+      retries:  5
+      start_period: 60s
+    restart: unless-stopped
 
   chroma:
     image: chromadb/chroma:latest
@@ -20,3 +47,10 @@ services:
     environment:
       - IS_PERSISTENT=true
       - ANONYMIZED_TELEMETRY=false
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 15s
+      timeout:  5s
+      retries:  3
+      start_period: 15s
+    restart: unless-stopped

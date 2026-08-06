@@ -34,6 +34,7 @@ def get_vector_store(collection: str = "knowledge_base"):
                 "QDRANT_URL must be set when APP_ENV is production and backend is qdrant"
             )
         from src.vectordb.qdrant_store import get_qdrant_store
+
         log.info(
             "vector_store_selected",
             backend="qdrant",
@@ -42,6 +43,7 @@ def get_vector_store(collection: str = "knowledge_base"):
         )
         return get_qdrant_store(collection)
     from src.vectordb.chroma_store import get_chroma_store
+
     log.info(
         "vector_store_selected",
         backend="chroma",

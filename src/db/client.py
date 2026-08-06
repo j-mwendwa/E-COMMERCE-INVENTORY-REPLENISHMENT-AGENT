@@ -9,6 +9,7 @@ import random
 import structlog
 
 from src.config import settings
+from src.core.tracing import traceable
 
 log = structlog.get_logger()
 
@@ -25,30 +26,38 @@ class DatabaseClient:
     def is_mock(self) -> bool:
         return self._mode == "mock"
 
+    @traceable(name="db.get_stock_levels")
     async def get_stock_levels(self, skus: list[str] | None = None) -> dict[str, int]:
         if self._mode == "direct":
             return await self._direct_stock_levels(skus)
         return self._mock_stock_levels(skus)
 
+    @traceable(name="db.get_sales_history")
     async def get_sales_history(
-        self, skus: list[str] | None = None, days: int = 90,
+        self,
+        skus: list[str] | None = None,
+        days: int = 90,
     ) -> dict[str, list[dict]]:
         if self._mode == "direct":
             return await self._direct_sales_history(skus, days)
         return self._mock_sales_history(skus, days)
 
+    @traceable(name="db.get_supplier_lead_times")
     async def get_supplier_lead_times(
-        self, skus: list[str] | None = None,
+        self,
+        skus: list[str] | None = None,
     ) -> dict[str, list[dict]]:
         if self._mode == "direct":
             return await self._direct_supplier_lead_times(skus)
         return self._mock_supplier_lead_times(skus)
 
+    @traceable(name="db.get_reorder_analysis")
     async def get_reorder_analysis(self) -> list[dict]:
         if self._mode == "direct":
             return await self._direct_reorder_analysis()
         return self._mock_reorder_analysis()
 
+    @traceable(name="db.insert_purchase_order")
     async def insert_purchase_order(self, po: dict) -> bool:
         if self._mode == "direct":
             return await self._direct_insert_po(po)
@@ -59,6 +68,7 @@ class DatabaseClient:
 
     def _conn(self):
         import psycopg2
+
         return psycopg2.connect(settings.database_url)
 
     async def _direct_stock_levels(self, skus: list[str] | None) -> dict[str, int]:
@@ -77,9 +87,12 @@ class DatabaseClient:
             conn.close()
 
     async def _direct_sales_history(
-        self, skus: list[str] | None, days: int,
+        self,
+        skus: list[str] | None,
+        days: int,
     ) -> dict[str, list[dict]]:
         import psycopg2.extras
+
         conn = self._conn()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -99,9 +112,11 @@ class DatabaseClient:
             conn.close()
 
     async def _direct_supplier_lead_times(
-        self, skus: list[str] | None,
+        self,
+        skus: list[str] | None,
     ) -> dict[str, list[dict]]:
         import psycopg2.extras
+
         conn = self._conn()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -120,6 +135,7 @@ class DatabaseClient:
 
     async def _direct_reorder_analysis(self) -> list[dict]:
         import psycopg2.extras
+
         conn = self._conn()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -160,14 +176,23 @@ class DatabaseClient:
 
     def _mock_stock_levels(self, skus: list[str] | None) -> dict[str, int]:
         products = skus or [
-            "SKU-A100", "SKU-B200", "SKU-C300", "SKU-D400", "SKU-E500",
+            "SKU-A100",
+            "SKU-B200",
+            "SKU-C300",
+            "SKU-D400",
+            "SKU-E500",
         ]
         return {sku: random.randint(0, 100) for sku in products}
 
     def _mock_sales_history(self, skus: list[str] | None, days: int) -> dict[str, list[dict]]:
         import datetime
+
         products = skus or [
-            "SKU-A100", "SKU-B200", "SKU-C300", "SKU-D400", "SKU-E500",
+            "SKU-A100",
+            "SKU-B200",
+            "SKU-C300",
+            "SKU-D400",
+            "SKU-E500",
         ]
         result: dict[str, list[dict]] = {}
         for sku in products:
@@ -175,12 +200,14 @@ class DatabaseClient:
             for d in range(days):
                 if random.random() > 0.7:
                     date = datetime.date.today() - datetime.timedelta(days=d)
-                    records.append({
-                        "sku": sku,
-                        "sale_date": date.isoformat(),
-                        "quantity": random.randint(1, 20),
-                        "unit_price": round(random.uniform(5, 50), 2),
-                    })
+                    records.append(
+                        {
+                            "sku": sku,
+                            "sale_date": date.isoformat(),
+                            "quantity": random.randint(1, 20),
+                            "unit_price": round(random.uniform(5, 50), 2),
+                        }
+                    )
             result[sku] = records
         return result
 
@@ -190,8 +217,11 @@ class DatabaseClient:
                 {"supplier_name": "GlobalSupply Co.", "lead_time_days": 7, "reliability": 0.92},
             ],
             "SKU-B200": [
-                {"supplier_name": "Bulk Distributors Inc.",
-                 "lead_time_days": 14, "reliability": 0.95},
+                {
+                    "supplier_name": "Bulk Distributors Inc.",
+                    "lead_time_days": 14,
+                    "reliability": 0.95,
+                },
             ],
             "SKU-C300": [
                 {"supplier_name": "GlobalSupply Co.", "lead_time_days": 7, "reliability": 0.92},
@@ -209,16 +239,36 @@ class DatabaseClient:
 
     def _mock_reorder_analysis(self) -> list[dict]:
         return [
-            {"sku": "SKU-A100", "current_quantity": 25,
-             "avg_daily_demand": 5.0, "lead_time_days": 7},
-            {"sku": "SKU-B200", "current_quantity": 120,
-             "avg_daily_demand": 12.0, "lead_time_days": 14},
-            {"sku": "SKU-C300", "current_quantity": 8,
-             "avg_daily_demand": 3.0, "lead_time_days": 7},
-            {"sku": "SKU-D400", "current_quantity": 60,
-             "avg_daily_demand": 8.0, "lead_time_days": 3},
-            {"sku": "SKU-E500", "current_quantity": 3,
-             "avg_daily_demand": 2.0, "lead_time_days": 10},
+            {
+                "sku": "SKU-A100",
+                "current_quantity": 25,
+                "avg_daily_demand": 5.0,
+                "lead_time_days": 7,
+            },
+            {
+                "sku": "SKU-B200",
+                "current_quantity": 120,
+                "avg_daily_demand": 12.0,
+                "lead_time_days": 14,
+            },
+            {
+                "sku": "SKU-C300",
+                "current_quantity": 8,
+                "avg_daily_demand": 3.0,
+                "lead_time_days": 7,
+            },
+            {
+                "sku": "SKU-D400",
+                "current_quantity": 60,
+                "avg_daily_demand": 8.0,
+                "lead_time_days": 3,
+            },
+            {
+                "sku": "SKU-E500",
+                "current_quantity": 3,
+                "avg_daily_demand": 2.0,
+                "lead_time_days": 10,
+            },
         ]
 
 

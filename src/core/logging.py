@@ -1,8 +1,10 @@
 import structlog
 
 from src.config import cfg
+from src.core.tracing import traceable
 
 
+@traceable(name="setup_logging")
 def setup_logging() -> None:
     env = cfg.get("app", {}).get("env", "development")
     structlog.configure(

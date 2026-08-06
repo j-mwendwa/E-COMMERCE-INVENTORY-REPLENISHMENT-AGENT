@@ -12,21 +12,22 @@ from slowapi.util import get_remote_address
 from src.api.routes import router
 from src.config import cfg
 from src.core.logging import setup_logging
+from src.core.tracing import setup_tracing, traceable
 
 log = structlog.get_logger()
-
 limiter = Limiter(key_func=get_remote_address, default_limits=["30/minute"])
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     setup_logging()
+    setup_tracing()
     log.info("app_starting", env=cfg.get("app", {}).get("env", "development"))
-
     mcp_enabled = cfg.get("mcp", {}).get("enabled", False)
     if mcp_enabled:
         try:
             from src.tools.mcp_client import load_mcp_tools
+
             count = await load_mcp_tools()
             log.info("mcp_loaded", tool_count=count)
         except Exception:
@@ -39,6 +40,7 @@ async def lifespan(_app: FastAPI):
     log.info("app_shutting_down")
 
 
+@traceable(name="create_app")
 def create_app() -> FastAPI:
     app = FastAPI(
         title=cfg.get("app", {}).get("name", "Inventory Replenishment Agent"),

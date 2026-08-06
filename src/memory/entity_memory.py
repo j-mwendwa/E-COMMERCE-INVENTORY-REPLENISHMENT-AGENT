@@ -41,7 +41,7 @@ class EntityMemory:
         raw = self.path.read_text()
         if self._cipher and raw.startswith(ENCRYPTED_PREFIX):
             try:
-                raw = self._cipher.decrypt(raw[len(ENCRYPTED_PREFIX):].encode()).decode()
+                raw = self._cipher.decrypt(raw[len(ENCRYPTED_PREFIX) :].encode()).decode()
             except InvalidToken as err:
                 raise ValueError("Memory decryption failed: invalid key or corrupted data") from err
         self._facts = json.loads(raw)

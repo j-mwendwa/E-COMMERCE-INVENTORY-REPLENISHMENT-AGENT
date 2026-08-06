@@ -1,55 +1,98 @@
+# ═══════════════════════════════════════════════════════════════
+# configs/config.yaml  —  Runtime tuning (no secrets here)
+# ═══════════════════════════════════════════════════════════════
+
+# ── App ────────────────────────────────────────────────────────
 app:
   name: inventory-replenishment-agent
   version: 0.1.0
-  env: development
+  env: development           # overridden by APP_ENV at runtime
 
+# ── LLM ────────────────────────────────────────────────────────
 llm:
-  default_model: gemini-1.5-flash
+  default_model: gemini-2.5-flash      # primary agent
+  forecast_model: gemini-2.5-flash     # demand forecast subgraph
+  supplier_model: gemini-2.5-flash     # supplier selection subgraph
   temperature: 0.0
   max_tokens: 4096
 
+# ── Context ────────────────────────────────────────────────────
 context:
   target_context_tokens: 8000
 
+# ── Retrieval ──────────────────────────────────────────────────
 retrieval:
   top_k: 5
   similarity_cutoff: 0.7
+  inventory_collection: inventory_kb
+  supplier_collection:  supplier_kb
 
+# ── Graph ──────────────────────────────────────────────────────
 graph:
   max_iterations: 10
   human_in_the_loop: true
 
-inventory:
-  default_lead_time_days: 14
-  safety_stock_multiplier: 1.5
-  eoq_holding_cost_rate: 0.25
-  eoq_order_cost: 50.0
+# ── Prompts ────────────────────────────────────────────────────
+prompts:
+  version: v1
+  hot_reload: false
 
-escalation:
-  order_value_threshold: 10000.0
-  risk_score_threshold: 0.7
-
-audit:
-  default_interval_minutes: 60
-  enable_scheduled_audits: false
-
+# ── MCP ────────────────────────────────────────────────────────
 mcp:
-  # Enable MCP servers from the Anthropic registry.
-  # Deterministic nodes (stock_monitor, demand_forecast) use DatabaseClient
-  # directly. MCP tools are available to the LLM agent and for Slack
-  # escalation notifications.
   enabled: false
   servers:
     postgres:
       transport: stdio
       command: npx
       args: ["-y", "@anthropic/mcp-server-postgres"]
-      env:
-        DATABASE_URL: "${DATABASE_URL}"
+      enabled: true
     slack:
       transport: stdio
       command: npx
       args: ["-y", "@anthropic/mcp-server-slack"]
-      env:
-        SLACK_BOT_TOKEN: "${SLACK_BOT_TOKEN}"
-        SLACK_TEAM_ID: "${SLACK_TEAM_ID}"
+      enabled: true
+    # fetch:
+    #   transport: stdio
+    #   command: uvx
+    #   args: ["mcp-server-fetch"]
+    #   enabled: true
+
+# ── Inventory ──────────────────────────────────────────────────
+inventory:
+  default_lead_time_days: 14
+  safety_stock_multiplier: 1.5
+  eoq_holding_cost_rate: 0.25
+  eoq_order_cost: 50.0
+
+# ── Ingestion ──────────────────────────────────────────────────
+ingestion:
+  chunk_size: 512
+  chunk_overlap: 64
+  use_title_extractor: false     # enable only if LLM quota is abundant
+
+# ── Security ───────────────────────────────────────────────────
+security:
+  rate_limit: "30/minute"
+  max_input_length: 4000
+  max_output_length: 16000
+  blocked_phrases:
+    - "ignore previous instructions"
+    - "disregard all prior"
+    - "system prompt leak"
+    - "jailbreak"
+
+# ── Escalation ─────────────────────────────────────────────────
+escalation:
+  order_value_threshold: 10000.0
+  risk_score_threshold: 0.7
+  human_review_keywords:
+    - "urgent"
+    - "out of stock"
+    - "critical shortage"
+    - "supplier failure"
+    - "force majeure"
+
+# ── Audit ──────────────────────────────────────────────────────
+audit:
+  default_interval_minutes: 60
+  enable_scheduled_audits: false
