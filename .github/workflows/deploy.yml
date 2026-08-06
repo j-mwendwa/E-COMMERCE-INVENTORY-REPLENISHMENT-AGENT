@@ -75,6 +75,7 @@ jobs:
   quality:
     name: "🔍 Code Quality"
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     if: ${{ github.event.inputs.skip_tests != 'true' }}
     steps:
       - uses: actions/checkout@v4
@@ -105,6 +106,7 @@ jobs:
   test:
     name: "🧪 Tests (Python ${{ matrix.python-version }})"
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: ${{ github.event.inputs.skip_tests != 'true' }}
     strategy:
       fail-fast: false
@@ -150,6 +152,7 @@ jobs:
   security:
     name: "🛡️ Security Scan"
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       security-events: write
       contents: read
@@ -177,6 +180,7 @@ jobs:
   build:
     name: "🐳 Build & Push Docker Image"
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [quality, test, security]
     # Don't gate on optional lint/security — proceed if they pass OR are skipped
     if: |
@@ -261,6 +265,7 @@ jobs:
   validate-secrets:
     name: "🔑 Validate Secrets"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: build
     if: needs.build.result == 'success'
     env:
@@ -294,6 +299,7 @@ jobs:
   deploy-staging:
     name: "🚀 Deploy → Staging"
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [build, validate-secrets]
     if: |
       needs.build.result            == 'success' &&
@@ -418,6 +424,7 @@ jobs:
   smoke-test:
     name: "💨 Smoke Tests — Staging"
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: deploy-staging
     if: needs.deploy-staging.result == 'success'
 
@@ -463,6 +470,7 @@ jobs:
   deploy-prod:
     name: "🏭 Deploy → Production"
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [build, smoke-test]
     if: |
       needs.build.result      == 'success' &&
@@ -618,6 +626,7 @@ jobs:
   notify:
     name: "📣 Notify"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: [quality, test, security, build, validate-secrets, deploy-staging, smoke-test, deploy-prod]
     if: always() && github.event_name != 'pull_request'
     env:
