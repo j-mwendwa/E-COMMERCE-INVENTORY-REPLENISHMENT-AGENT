@@ -390,7 +390,6 @@ jobs:
               --name "$APP_NAME" \
               --resource-group "${{ env.ACA_RG }}" \
               --image "$FULL_IMAGE" \
-              --registry-identity "${{ env.ACA_MI }}" \
               --set-env-vars $ENV_VARS
 
           else
@@ -557,7 +556,6 @@ jobs:
               --name "$APP_NAME" \
               --resource-group "${{ env.ACA_RG }}" \
               --image "$FULL_IMAGE" \
-              --registry-identity "${{ env.ACA_MI }}" \
               --set-env-vars $ENV_VARS
 
           else
