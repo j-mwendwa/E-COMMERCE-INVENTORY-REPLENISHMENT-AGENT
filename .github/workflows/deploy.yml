@@ -63,7 +63,7 @@ env:
   REGISTRY:       ${{ secrets.ACR_LOGIN_SERVER }}
   IMAGE_NAME:     inventory-replenishment-agent
   PYTHON_VERSION: "3.11"
-  ACA_ENV:        inventory-env
+  ACA_ENV:        triage-env
   ACA_RG:         ${{ secrets.AZURE_RESOURCE_GROUP }}
 
 defaults:
