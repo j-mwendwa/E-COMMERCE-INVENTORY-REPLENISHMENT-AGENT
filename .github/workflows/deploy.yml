@@ -390,7 +390,7 @@ jobs:
               --name "$APP_NAME" \
               --resource-group "${{ env.ACA_RG }}" \
               --image "$FULL_IMAGE" \
-              --mi-user-assigned "${{ env.ACA_MI }}" \
+              --registry-identity "${{ env.ACA_MI }}" \
               --set-env-vars $ENV_VARS
 
           else
@@ -403,7 +403,7 @@ jobs:
               --environment "${{ env.ACA_ENV }}" \
               --image "$FULL_IMAGE" \
               --registry-server "$ACR_SERVER" \
-              --mi-user-assigned "${{ env.ACA_MI }}" \
+              --registry-identity "${{ env.ACA_MI }}" \
               --ingress external \
               --target-port 8000 \
               --min-replicas 0 \
@@ -557,7 +557,7 @@ jobs:
               --name "$APP_NAME" \
               --resource-group "${{ env.ACA_RG }}" \
               --image "$FULL_IMAGE" \
-              --mi-user-assigned "${{ env.ACA_MI }}" \
+              --registry-identity "${{ env.ACA_MI }}" \
               --set-env-vars $ENV_VARS
 
           else
@@ -570,7 +570,7 @@ jobs:
               --environment "${{ env.ACA_ENV }}" \
               --image "$FULL_IMAGE" \
               --registry-server "$ACR_SERVER" \
-              --mi-user-assigned "${{ env.ACA_MI }}" \
+              --registry-identity "${{ env.ACA_MI }}" \
               --ingress external \
               --target-port 8000 \
               --min-replicas 1 \
