@@ -65,6 +65,7 @@ env:
   PYTHON_VERSION: "3.11"
   ACA_ENV:        triage-env
   ACA_RG:         ${{ secrets.AZURE_RESOURCE_GROUP }}
+  ACA_MI:         /subscriptions/b968f6c0-8fbf-4203-bd27-959a2be155c9/resourcegroups/triage-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/inventory-aca-identity
 
 defaults:
   run:
@@ -389,6 +390,7 @@ jobs:
               --name "$APP_NAME" \
               --resource-group "${{ env.ACA_RG }}" \
               --image "$FULL_IMAGE" \
+              --mi-user-assigned "${{ env.ACA_MI }}" \
               --set-env-vars $ENV_VARS
 
           else
@@ -401,8 +403,7 @@ jobs:
               --environment "${{ env.ACA_ENV }}" \
               --image "$FULL_IMAGE" \
               --registry-server "$ACR_SERVER" \
-              --registry-username "$ACR_USER" \
-              --registry-password "$ACR_PASS" \
+              --mi-user-assigned "${{ env.ACA_MI }}" \
               --ingress external \
               --target-port 8000 \
               --min-replicas 0 \
@@ -556,6 +557,7 @@ jobs:
               --name "$APP_NAME" \
               --resource-group "${{ env.ACA_RG }}" \
               --image "$FULL_IMAGE" \
+              --mi-user-assigned "${{ env.ACA_MI }}" \
               --set-env-vars $ENV_VARS
 
           else
@@ -568,8 +570,7 @@ jobs:
               --environment "${{ env.ACA_ENV }}" \
               --image "$FULL_IMAGE" \
               --registry-server "$ACR_SERVER" \
-              --registry-username "$ACR_USER" \
-              --registry-password "$ACR_PASS" \
+              --mi-user-assigned "${{ env.ACA_MI }}" \
               --ingress external \
               --target-port 8000 \
               --min-replicas 1 \
