@@ -14,8 +14,10 @@
 #
 # Required GitHub Secrets:
 #   ACR_LOGIN_SERVER               — e.g. inventoryregistry.azurecr.io
-#   ACR_USERNAME                   — Service-principal App ID (ACR push + ACA deploy)
-#   ACR_PASSWORD                   — Service-principal client secret
+#   ACR_USERNAME                   — ACR registry username (Docker push only)
+#   ACR_PASSWORD                   — ACR registry password (Docker push only)
+#   AZURE_CLIENT_ID                — Azure service principal App ID
+#   AZURE_CLIENT_SECRET            — Azure service principal client secret
 #   AZURE_TENANT_ID                — Azure AD tenant ID
 #   AZURE_SUBSCRIPTION_ID          — Azure subscription ID
 #   AZURE_RESOURCE_GROUP           — Resource group containing both Container Apps
@@ -321,8 +323,8 @@ jobs:
         with:
           creds: >-
             {
-              "clientId":       "${{ secrets.ACR_USERNAME }}",
-              "clientSecret":   "${{ secrets.ACR_PASSWORD }}",
+              "clientId":       "${{ secrets.AZURE_CLIENT_ID }}",
+              "clientSecret":   "${{ secrets.AZURE_CLIENT_SECRET }}",
               "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
               "tenantId":       "${{ secrets.AZURE_TENANT_ID }}"
             }
@@ -488,8 +490,8 @@ jobs:
         with:
           creds: >-
             {
-              "clientId":       "${{ secrets.ACR_USERNAME }}",
-              "clientSecret":   "${{ secrets.ACR_PASSWORD }}",
+              "clientId":       "${{ secrets.AZURE_CLIENT_ID }}",
+              "clientSecret":   "${{ secrets.AZURE_CLIENT_SECRET }}",
               "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
               "tenantId":       "${{ secrets.AZURE_TENANT_ID }}"
             }
